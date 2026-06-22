@@ -212,6 +212,7 @@ def procesar_mensaje(telefono, mensaje):
         sesion["paso"] = siguiente
 
         if siguiente == 15:
+            datos["estado_registro"] = "Completo"
             guardar_datos(datos)
             sesion["finalizada"] = True
             return (
