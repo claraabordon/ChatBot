@@ -124,16 +124,22 @@ def procesar_mensaje(telefono, mensaje):
     
     if paso == 0:
         datos["nombre_prestador"] = mensaje
+        datos["estado_registro"] = "Incompleto"  # 1. Aseguramos el flag
+        guardar_datos(datos)
         sesion["paso"] = 1
         return "¿A qué *Localidad o Paraje* pertenece?"
 
     elif paso == 1:
         datos["localidad"] = mensaje
+        datos["estado_registro"] = "Incompleto"  # 1. Aseguramos el flag
+        guardar_datos(datos)
         sesion["paso"] = 2
         return "¿Cuál es el nombre del *referente o contacto principal*?"
 
     elif paso == 2:
         datos["referente"] = mensaje
+        datos["estado_registro"] = "Incompleto"  # 1. Aseguramos el flag
+        guardar_datos(datos)
         sesion["paso"] = 3
         return (
             "¿Qué tipo de servicio brinda?\n"
