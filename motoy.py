@@ -48,7 +48,7 @@ def obtener_prompt(paso, datos=None):
             "¡Hola! 👋 Te damos la bienvenida al asistente virtual para el Relevamiento Anual de Prestadores. Este año queremos ayudarte a cargar los datos de forma rápida. ¿Arrancamos? \n"
             "Vamos a registrar algunos datos. Para empezar, escribí el Nombre o Razón Social de la institución prestadora."
         ),
-        1: "¿En qué localidad opera el prestador?",
+        1: "¿A qué Localidad o Paraje pertenece?",
         2: "¿Cuál es el nombre del referente o contacto principal?",
         3: (
             "¿Qué tipo de servicio brinda?\n"
