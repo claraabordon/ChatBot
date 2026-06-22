@@ -45,8 +45,8 @@ def obtener_prompt(paso, datos=None):
 
     prompts = {
         0: (
-            "¡Hola! 👋 Soy el asistente de relevamiento de prestadores de servicios sanitarios.\n"
-            "Vamos a registrar algunos datos. ¿Cuál es el nombre del prestador?"
+            "¡Hola! 👋 Te damos la bienvenida al asistente virtual para el Relevamiento Anual de Prestadores. Este año queremos ayudarte a cargar los datos de forma rápida. ¿Arrancamos? \n"
+            "Vamos a registrar algunos datos. Para empezar, escribí el Nombre o Razón Social de la institución prestadora."
         ),
         1: "¿En qué localidad opera el prestador?",
         2: "¿Cuál es el nombre del referente o contacto principal?",
