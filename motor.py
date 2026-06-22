@@ -219,6 +219,10 @@ def procesar_mensaje(telefono, mensaje):
                 "¡Gracias! 🎉 Los datos del relevamiento anual (incluyendo el módulo de atención al usuario) fueron registrados correctamente.\n\n"
                 "Si necesitás cargar otro prestador, simplemente escribí *hola* para volver a comenzar."
             )
+            
+        # Si no es el último paso, guardamos el avance como Incompleto y seguimos
+        datos["estado_registro"] = "Incompleto"
+        guardar_datos(datos)
 
         return avanzar_y_obtener_pregunta(telefono, solo_repetir=True)
 
