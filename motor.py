@@ -286,4 +286,10 @@ def avanzar_y_obtener_pregunta(telefono, solo_repetir=False):
         7:  "¿Cuántos empleados trabajan específicamente en el día a día operativo del área de agua?",
         8:  "¿Cuántas *conexiones cloacales* activas tiene la red actualmente?",
         9:  "¿Cuántos *habitantes* están conectados efectivamente a la red de desagües cloacales?",
-        10: "¿Cuál es el *caudal diario cloacal* promedio
+        10: "¿Cuál es el *caudal diario cloacal* promedio recolectado/tratado (en m³/día)?",
+        11: "Pasamos al módulo de Reclamos. 📞 ¿Cuántos reclamos registraron en el último año por *Falta de presión de agua*? (Si fue ninguno o no sabés, respondé 0 o *ns*).",
+        12: "¿Cuántos reclamos registraron en el último año por *Escapes o Fugas de agua* en calzada o vereda?",
+        13: "¿Cuántos reclamos registraron en el último año por *Obstrucciones domiciliarias o desbordes cloacales*?",
+        14: "Por último, en relación a Facturación: ¿Cuántos *cortes efectivos del servicio por falta de pago* realizaron en el último año?"
+    }
+    return prompts.get(paso, "Procediendo con el cuestionario...")
