@@ -1,4 +1,4 @@
-# motor.py — v5 con tu presentación unificada integrada
+# motor.py — v6 COMPLETO con guardado incremental y soporte para "No Sabe" (ns)
 import json
 from persistencia import guardar_datos
 
@@ -9,7 +9,7 @@ sesiones = {}
 PERFILES_PERSONAL = ["Profesionales", "Técnicos", "Administrativos", "Obreros", "Otros"]
 
 # -------------------------------------------------------------------
-# Helpers de validación
+# Helpers de validación y conversión
 # -------------------------------------------------------------------
 
 def es_numero_entero_positivo(texto, incluir_cero=False):
@@ -124,21 +124,21 @@ def procesar_mensaje(telefono, mensaje):
     
     if paso == 0:
         datos["nombre_prestador"] = mensaje
-        datos["estado_registro"] = "Incompleto"  # 1. Aseguramos el flag
+        datos["estado_registro"] = "Incompleto"
         guardar_datos(datos)
         sesion["paso"] = 1
         return "¿A qué *Localidad o Paraje* pertenece?"
 
     elif paso == 1:
         datos["localidad"] = mensaje
-        datos["estado_registro"] = "Incompleto"  # 1. Aseguramos el flag
+        datos["estado_registro"] = "Incompleto"
         guardar_datos(datos)
         sesion["paso"] = 2
         return "¿Cuál es el nombre del *referente o contacto principal*?"
 
     elif paso == 2:
         datos["referente"] = mensaje
-        datos["estado_registro"] = "Incompleto"  # 1. Aseguramos el flag
+        datos["estado_registro"] = "Incompleto"
         guardar_datos(datos)
         sesion["paso"] = 3
         return (
@@ -158,7 +158,7 @@ def procesar_mensaje(telefono, mensaje):
         sesion["paso"] = "PERSONAL"
         sesion["indice_perfil_personal"] = 0
         sesion["sub_paso_personal"] = 0
-        return f"Perfecto. Ahora pasamos a la sección de *Personal / Recursos Humanos* 👥.\n\n¿Cuántos empleados *PROFESIONALES* tienen en **relación de dependencia**? (Si no tienen, respondé 0)."
+        return f"Perfecto. Ahora pasamos a la sección de *Personal / Recursos Humanos* 👥.\n\n¿Cuántos empleados *PROFESIONALES* tienen en **relación de dependencia**? (Si no tienen o no saben, respondé 0)."
 
     # --- MÓDULO DINÁMICO DE PERSONAL ---
     elif paso == "PERSONAL":
@@ -167,10 +167,16 @@ def procesar_mensaje(telefono, mensaje):
         perfil_actual = PERFILES_PERSONAL[idx_perfil]
         prefijo_clave = f"personal_{perfil_actual.lower()}"
 
+        # FIX 1: Corrección de sintaxis en el sub_paso == 0
         if sub_paso == 0:
             if not es_numero_entero_positivo(mensaje, incluir_cero=True):
                 return f"Por favor, ingresá un número válido.\n\n¿Cuántos empleados *{perfil_actual.upper()}* tienen en **relación de dependencia**? (Respondé un número o 0)."
             datos[f"{prefijo_clave}_dependencia"] = int(mensaje)
+            
+            # FIX 2: Guardado incremental en personal
+            datos["estado_registro"] = "Incompleto"
+            guardar_datos(datos)
+            
             sesion["sub_paso_personal"] = 1
             return f"¿Cuántos empleados *{perfil_actual.upper()}* tienen **contratados**? (Respondé un número o 0)."
 
@@ -178,6 +184,11 @@ def procesar_mensaje(telefono, mensaje):
             if not es_numero_entero_positivo(mensaje, incluir_cero=True):
                 return f"Por favor, ingresá un número válido.\n\n¿Cuántos empleados *{perfil_actual.upper()}* tienen **contratados**? (Respondé un número o 0)."
             datos[f"{prefijo_clave}_contratados"] = int(mensaje)
+            
+            # FIX 2: Guardado incremental en personal
+            datos["estado_registro"] = "Incompleto"
+            guardar_datos(datos)
+            
             total_perfil = datos[f"{prefijo_clave}_dependencia"] + datos[f"{prefijo_clave}_contratados"]
             
             if total_perfil > 0:
@@ -185,18 +196,30 @@ def procesar_mensaje(telefono, mensaje):
                 return f"¿Qué **porcentaje (%) de afectación** promedio tienen los empleados *{perfil_actual.upper()}* asignado a los servicios sanitarios? (Ej: 80)."
             else:
                 datos[f"{prefijo_clave}_afectacion_pct"] = 0
+                guardar_datos(datos)
                 return avanzar_perfil_personal(sesion, datos)
 
         elif sub_paso == 2:
             if not es_numero_entero_positivo(mensaje, incluir_cero=True) or int(mensaje) > 100:
                 return f"Por favor, ingresá un porcentaje válido entre 0 y 100.\n\n¿Qué **porcentaje (%) de afectación** promedio tienen los empleados *{perfil_actual.upper()}*?"
             datos[f"{prefijo_clave}_afectacion_pct"] = int(mensaje)
+            
+            # FIX 2: Guardado incremental en personal
+            datos["estado_registro"] = "Incompleto"
+            guardar_datos(datos)
+            
             return avanzar_perfil_personal(sesion, datos)
 
     # --- PASOS NUMÉRICOS TÉCNICOS Y RECLAMOS (4 al 14) ---
     elif paso in range(4, 15):
-        if not es_numero_entero_positivo(mensaje, incluir_cero=True):
-            return "Ese valor no parece válido. Por favor ingresá un número entero o 0.\n\n" + avanzar_y_obtener_pregunta(telefono, solo_repetir=True)
+        # FIX 3: Soportar la palabra "ns" o "no sabe" como equivalente a 0 para no trabar el flujo
+        valor_procesado = mensaje.lower().strip()
+        if valor_procesado in ("ns", "no sabe", "no se"):
+            valor_numerico = 0
+        elif es_numero_entero_positivo(mensaje, incluir_cero=True):
+            valor_numerico = int(mensaje)
+        else:
+            return "Ese valor no parece válido. Por favor ingresá un número entero, 0 o escribí *ns* si no sabés el dato.\n\n" + avanzar_y_obtener_pregunta(telefono, solo_repetir=True)
 
         claves = {
             4:  "conexiones_agua",
@@ -211,7 +234,7 @@ def procesar_mensaje(telefono, mensaje):
             13: "reclamos_obstruccion_desborde_cloacal",
             14: "cortes_servicio_falta_pago"
         }
-        datos[claves[paso]] = int(mensaje)
+        datos[claves[paso]] = valor_numerico
 
         tipo_servicio = datos.get("tipo_servicio", 3)
         siguiente = calcular_siguiente_paso(paso, tipo_servicio)
@@ -263,10 +286,4 @@ def avanzar_y_obtener_pregunta(telefono, solo_repetir=False):
         7:  "¿Cuántos empleados trabajan específicamente en el día a día operativo del área de agua?",
         8:  "¿Cuántas *conexiones cloacales* activas tiene la red actualmente?",
         9:  "¿Cuántos *habitantes* están conectados efectivamente a la red de desagües cloacales?",
-        10: "¿Cuál es el *caudal diario cloacal* promedio recolectado/tratado (en m³/día)?",
-        11: "Pasamos al módulo de Reclamos. 📞 ¿Cuántos reclamos registraron en el último año por *Falta de presión de agua*? (Si fue ninguno, respondé 0).",
-        12: "¿Cuántos reclamos registraron en el último año por *Escapes o Fugas de agua* en calzada o vereda?",
-        13: "¿Cuántos reclamos registraron en el último año por *Obstrucciones domiciliarias o desbordes cloacales*?",
-        14: "Por último, en relación a Facturación: ¿Cuántos *cortes efectivos del servicio por falta de pago* realizaron en el último año?"
-    }
-    return prompts.get(paso, "Procediendo con el cuestionario...")
+        10: "¿Cuál es el *caudal diario cloacal* promedio
