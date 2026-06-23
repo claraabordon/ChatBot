@@ -1,6 +1,6 @@
 # motor.py — Máquina de Estados para Bot Conversacional de WhatsApp
 # Relevamiento Anual de Prestadores (ANEXO I)
-# Versión: 3.1 - Corregida la sincronización del módulo de Personal
+# Versión: 3.2 - Doble Afectación Personal + Edición Final Interactiva
 
 import json
 from persistencia import guardar_datos
@@ -13,6 +13,26 @@ PERFILES_PERSONAL = ["Profesionales", "Técnicos", "Administrativos", "Obreros",
 TIPO_SERVICIO_AGUA_SOLO = 1
 TIPO_SERVICIO_CLOACAS_SOLO = 2
 TIPO_SERVICIO_AMBOS = 3
+
+# Mapeo de casilleros para el resumen de edición (Paso 25)
+CASILLEROS_EDICION = {
+    "1": ("conexiones_agua", "Conexiones de agua residenciales/totales"),
+    "2": ("habitantes_agua", "Población servida con red de agua"),
+    "3": ("caudal_agua_m3dia", "Caudal diario de agua (m³/día)"),
+    "4": ("macromedidores_operativos_agua", "Macro-medidores operativos"),
+    "5": ("longitud_red_agua_km", "Longitud total red de agua (km)"),
+    "6": ("capacidad_almacenamiento_m3", "Capacidad de almacenamiento (m³)"),
+    "7": ("conexiones_cloacas", "Conexiones cloacales residenciales"),
+    "8": ("conexiones_cloacas_com_ind", "Conexiones cloacales comerciales/industriales"),
+    "9": ("habitantes_cloacas", "Población servida con red de cloacas"),
+    "10": ("longitud_red_cloacas_km", "Longitud total red de cloacas (km)"),
+    "11": ("caudal_cloacas_media", "Caudal diario cloacal (m³/día)"),
+    "12": ("reclamos_falta_presion", "Reclamos por falta de presión de agua"),
+    "13": ("reclamos_escape_calzada_vereda", "Reclamos por escapes/fugas de agua"),
+    "14": ("reclamos_obstruccion_cloacal", "Reclamos por obstrucciones cloacales"),
+    "15": ("cortes_servicio_falta_pago", "Cortes de servicio por falta de pago"),
+    "16": ("poblacion_urbana_cloacas", "Población urbana estimada (Solo Cloacas)"),
+}
 
 # ============================================================================
 # INICIALIZACIÓN DE SESIÓN
@@ -27,8 +47,10 @@ def crear_sesion_nueva(telefono):
         "telefono": telefono,
         "estado_registro": "Incompleto",
         "paso_actual": 0,
-        "paso_personal_actual": None,  # Para iterar sobre PERFILES_PERSONAL (dependencia, contratados, afectacion)
+        "paso_personal_actual": None,  # dependencia -> contratados -> afectacion_agua -> afectacion_cloacas
         "perfil_personal_index": 0,    # Índice del perfil actual (0-4)
+        "en_modo_edicion": False,      # Flag para detectar si venimos de edición en paso 25
+        "paso_edicion_previo": None,   # Guarda el paso original antes de entrar en edición
         
         # Datos básicos
         "nombre_prestador": None,
@@ -40,13 +62,13 @@ def crear_sesion_nueva(telefono):
         "agua_tarifado": None,
         "cloacas_tarifado": None,
         
-        # Personal (diccionario anidado)
+        # Personal (diccionario anidado con doble afectación)
         "personal": {
-            "Profesionales": {"dependencia": None, "contratados": None, "afectacion": None},
-            "Técnicos": {"dependencia": None, "contratados": None, "afectacion": None},
-            "Administrativos": {"dependencia": None, "contratados": None, "afectacion": None},
-            "Obreros": {"dependencia": None, "contratados": None, "afectacion": None},
-            "Otros": {"dependencia": None, "contratados": None, "afectacion": None},
+            "Profesionales": {"dependencia": None, "contratados": None, "afectacion_agua": None, "afectacion_cloacas": None},
+            "Técnicos": {"dependencia": None, "contratados": None, "afectacion_agua": None, "afectacion_cloacas": None},
+            "Administrativos": {"dependencia": None, "contratados": None, "afectacion_agua": None, "afectacion_cloacas": None},
+            "Obreros": {"dependencia": None, "contratados": None, "afectacion_agua": None, "afectacion_cloacas": None},
+            "Otros": {"dependencia": None, "contratados": None, "afectacion_agua": None, "afectacion_cloacas": None},
         },
         
         # Infraestructura Agua
@@ -402,9 +424,9 @@ def obtener_proximo_paso(datos):
         )
         return paso, prompt
     
-    # PASO 25: Final / Despedida
+    # PASO 25: Resumen y Edición Final
     elif paso == 25:
-        return generar_mensaje_final(datos)
+        return generar_resumen_edicion(datos)
     
     return paso, "Error: paso desconocido."
 
@@ -431,29 +453,58 @@ def obtener_paso_personal(datos):
         prompt = f"*{perfil_actual}*: ¿Cuántos contratados (Honorarios/Prestaciones)?"
         return paso_actual_total, prompt
     
-    elif paso_personal == "afectacion":
+    elif paso_personal == "afectacion_agua":
         # Verificar si hay personal en este perfil
         personal_datos = datos["personal"][perfil_actual]
         total_personal = (personal_datos["dependencia"] or 0) + (personal_datos["contratados"] or 0)
         
-        # Si el total es 0 o tipo_servicio es único (no ambos), saltear el % de afectación
-        if total_personal == 0 or tipo_servicio != TIPO_SERVICIO_AMBOS:
-            datos["personal"][perfil_actual]["afectacion"] = 100 if total_personal > 0 else 0
-            
-            # Avanzar al siguiente perfil o terminar personal
+        # Si el total es 0 o tipo_servicio es 1 (Solo Agua), asignar automáticamente
+        if total_personal == 0:
+            datos["personal"][perfil_actual]["afectacion_agua"] = 0
+            datos["personal"][perfil_actual]["afectacion_cloacas"] = 0
             datos["perfil_personal_index"] += 1
             if datos["perfil_personal_index"] < len(PERFILES_PERSONAL):
                 datos["paso_personal_actual"] = "dependencia"
-                # NO modificamos paso_actual, permanece en 3.3
                 return obtener_paso_personal(datos)
             else:
-                # Personal completado, transicionar al paso 4
                 datos["paso_actual"] = 4
-                datos["paso_personal_actual"] = None  # Limpiar para evitar confusiones
+                datos["paso_personal_actual"] = None
                 return obtener_proximo_paso(datos)
         
-        # Si hay personal y tipo_servicio es AMBOS, preguntar el %
-        prompt = f"*{perfil_actual}*: ¿Qué % de afectación al servicio? (0-100)"
+        if tipo_servicio == TIPO_SERVICIO_AGUA_SOLO:
+            # Solo Agua: asignar automáticamente
+            datos["personal"][perfil_actual]["afectacion_agua"] = 100
+            datos["personal"][perfil_actual]["afectacion_cloacas"] = 0
+            datos["perfil_personal_index"] += 1
+            if datos["perfil_personal_index"] < len(PERFILES_PERSONAL):
+                datos["paso_personal_actual"] = "dependencia"
+                return obtener_paso_personal(datos)
+            else:
+                datos["paso_actual"] = 4
+                datos["paso_personal_actual"] = None
+                return obtener_proximo_paso(datos)
+        
+        elif tipo_servicio == TIPO_SERVICIO_CLOACAS_SOLO:
+            # Solo Cloacas: asignar automáticamente
+            datos["personal"][perfil_actual]["afectacion_agua"] = 0
+            datos["personal"][perfil_actual]["afectacion_cloacas"] = 100
+            datos["perfil_personal_index"] += 1
+            if datos["perfil_personal_index"] < len(PERFILES_PERSONAL):
+                datos["paso_personal_actual"] = "dependencia"
+                return obtener_paso_personal(datos)
+            else:
+                datos["paso_actual"] = 4
+                datos["paso_personal_actual"] = None
+                return obtener_proximo_paso(datos)
+        
+        else:
+            # Ambos: preguntar % para AGUA
+            prompt = f"*{perfil_actual}*: ¿Qué % de afectación al servicio de AGUA POTABLE? (0-100)"
+            return paso_actual_total, prompt
+    
+    elif paso_personal == "afectacion_cloacas":
+        # Preguntar % para CLOACAS
+        prompt = f"*{perfil_actual}*: ¿Qué % de afectación al servicio de DESAGÜES CLOACALES? (0-100)"
         return paso_actual_total, prompt
     
     return paso_actual_total, "Error en módulo de personal."
@@ -479,45 +530,165 @@ def procesar_respuesta_personal(datos, respuesta):
     if paso_personal == "dependencia":
         datos["personal"][perfil_actual]["dependencia"] = valor
         datos["paso_personal_actual"] = "contratados"
-        # paso_actual permanece en 3.3
     
     elif paso_personal == "contratados":
         datos["personal"][perfil_actual]["contratados"] = valor
-        datos["paso_personal_actual"] = "afectacion"
+        datos["paso_personal_actual"] = "afectacion_agua"
         
         total_personal = (datos["personal"][perfil_actual]["dependencia"] or 0) + (valor if valor is not None else 0)
         
-        # Si no hay personal o servicio no es ambos, asignar automáticamente y avanzar de perfil
-        if total_personal == 0 or tipo_servicio != TIPO_SERVICIO_AMBOS:
-            datos["personal"][perfil_actual]["afectacion"] = 100 if total_personal > 0 else 0
+        # Si no hay personal, asignar 0 a ambas afectaciones y avanzar
+        if total_personal == 0:
+            datos["personal"][perfil_actual]["afectacion_agua"] = 0
+            datos["personal"][perfil_actual]["afectacion_cloacas"] = 0
             datos["perfil_personal_index"] += 1
             
             if datos["perfil_personal_index"] < len(PERFILES_PERSONAL):
                 datos["paso_personal_actual"] = "dependencia"
-                # paso_actual permanece en 3.3
             else:
-                # Personal completado, transicionar al paso 4
+                datos["paso_actual"] = 4
+                datos["paso_personal_actual"] = None
+        
+        # Si hay personal pero tipo_servicio es SOLO AGUA
+        elif tipo_servicio == TIPO_SERVICIO_AGUA_SOLO:
+            datos["personal"][perfil_actual]["afectacion_agua"] = 100
+            datos["personal"][perfil_actual]["afectacion_cloacas"] = 0
+            datos["perfil_personal_index"] += 1
+            
+            if datos["perfil_personal_index"] < len(PERFILES_PERSONAL):
+                datos["paso_personal_actual"] = "dependencia"
+            else:
+                datos["paso_actual"] = 4
+                datos["paso_personal_actual"] = None
+        
+        # Si hay personal pero tipo_servicio es SOLO CLOACAS
+        elif tipo_servicio == TIPO_SERVICIO_CLOACAS_SOLO:
+            datos["personal"][perfil_actual]["afectacion_agua"] = 0
+            datos["personal"][perfil_actual]["afectacion_cloacas"] = 100
+            datos["perfil_personal_index"] += 1
+            
+            if datos["perfil_personal_index"] < len(PERFILES_PERSONAL):
+                datos["paso_personal_actual"] = "dependencia"
+            else:
                 datos["paso_actual"] = 4
                 datos["paso_personal_actual"] = None
     
-    elif paso_personal == "afectacion":
+    elif paso_personal == "afectacion_agua":
         if valor is not None:
             if valor < 0 or valor > 100:
                 return False, "❌ El porcentaje debe estar entre 0 y 100."
         
-        datos["personal"][perfil_actual]["afectacion"] = valor
+        datos["personal"][perfil_actual]["afectacion_agua"] = valor
+        datos["paso_personal_actual"] = "afectacion_cloacas"
+    
+    elif paso_personal == "afectacion_cloacas":
+        if valor is not None:
+            if valor < 0 or valor > 100:
+                return False, "❌ El porcentaje debe estar entre 0 y 100."
+        
+        # Validación CRÍTICA: Suma no debe superar 100%
+        afectacion_agua = datos["personal"][perfil_actual]["afectacion_agua"] or 0
+        afectacion_cloacas = valor if valor is not None else 0
+        suma_afectaciones = afectacion_agua + afectacion_cloacas
+        
+        if suma_afectaciones > 100:
+            return False, (
+                "❌ La suma de las afectaciones supera el 100% de la jornada laboral de este perfil. "
+                "Ingresá el % de cloacas correcto."
+            )
+        
+        datos["personal"][perfil_actual]["afectacion_cloacas"] = valor
         datos["perfil_personal_index"] += 1
         
         if datos["perfil_personal_index"] < len(PERFILES_PERSONAL):
             datos["paso_personal_actual"] = "dependencia"
-            # paso_actual permanece en 3.3
         else:
-            # Personal completado, transicionar al paso 4
             datos["paso_actual"] = 4
             datos["paso_personal_actual"] = None
     
     guardar_datos(datos)
     return True, None
+
+def generar_resumen_edicion(datos):
+    """
+    Genera el resumen consolidado de datos para edición final (Paso 25).
+    Mapea cada variable a un casillero del 1 al 16.
+    Retorna: (paso_numero, mensaje_prompt)
+    """
+    tipo_servicio = datos["tipo_servicio"]
+    
+    # Construir resumen con casilleros
+    resumen_lineas = ["📋 *RESUMEN DE DATOS CARGADOS:*\n"]
+    
+    # Casilleros de Agua
+    if tipo_servicio in [TIPO_SERVICIO_AGUA_SOLO, TIPO_SERVICIO_AMBOS]:
+        val = datos.get("conexiones_agua")
+        resumen_lineas.append(f"*Casillero 1:* Conexiones de agua: {val if val is not None else '(no cargado)'}")
+        
+        val = datos.get("habitantes_agua")
+        resumen_lineas.append(f"*Casillero 2:* Población servida (agua): {val if val is not None else '(no cargado)'}")
+        
+        val = datos.get("caudal_agua_m3dia")
+        resumen_lineas.append(f"*Casillero 3:* Caudal agua (m³/día): {val if val is not None else '(no cargado)'}")
+        
+        val = datos.get("macromedidores_operativos_agua")
+        resumen_lineas.append(f"*Casillero 4:* Macro-medidores: {val if val is not None else '(no cargado)'}")
+        
+        val = datos.get("longitud_red_agua_km")
+        resumen_lineas.append(f"*Casillero 5:* Longitud red agua (km): {val if val is not None else '(no cargado)'}")
+        
+        val = datos.get("capacidad_almacenamiento_m3")
+        resumen_lineas.append(f"*Casillero 6:* Capacidad almacenamiento (m³): {val if val is not None else '(no cargado)'}")
+    
+    # Casilleros de Cloacas
+    if tipo_servicio in [TIPO_SERVICIO_CLOACAS_SOLO, TIPO_SERVICIO_AMBOS]:
+        if tipo_servicio == TIPO_SERVICIO_CLOACAS_SOLO:
+            val = datos.get("poblacion_urbana_cloacas")
+            resumen_lineas.append(f"*Casillero 16:* Población urbana: {val if val is not None else '(no cargado)'}")
+        
+        val = datos.get("conexiones_cloacas")
+        idx = "7" if tipo_servicio == TIPO_SERVICIO_AMBOS else "7"
+        resumen_lineas.append(f"*Casillero {idx}:* Conexiones cloacales residenciales: {val if val is not None else '(no cargado)'}")
+        
+        val = datos.get("conexiones_cloacas_com_ind")
+        idx = "8" if tipo_servicio == TIPO_SERVICIO_AMBOS else "8"
+        resumen_lineas.append(f"*Casillero {idx}:* Conexiones comerciales/industriales: {val if val is not None else '(no cargado)'}")
+        
+        val = datos.get("habitantes_cloacas")
+        idx = "9" if tipo_servicio == TIPO_SERVICIO_AMBOS else "9"
+        resumen_lineas.append(f"*Casillero {idx}:* Población servida (cloacas): {val if val is not None else '(no cargado)'}")
+        
+        val = datos.get("longitud_red_cloacas_km")
+        idx = "10" if tipo_servicio == TIPO_SERVICIO_AMBOS else "10"
+        resumen_lineas.append(f"*Casillero {idx}:* Longitud red cloacas (km): {val if val is not None else '(no cargado)'}")
+        
+        val = datos.get("caudal_cloacas_media")
+        idx = "11" if tipo_servicio == TIPO_SERVICIO_AMBOS else "11"
+        resumen_lineas.append(f"*Casillero {idx}:* Caudal cloacal (m³/día): {val if val is not None else '(no cargado)'}")
+    
+    # Casilleros de Reclamos
+    if tipo_servicio in [TIPO_SERVICIO_AGUA_SOLO, TIPO_SERVICIO_AMBOS]:
+        val = datos.get("reclamos_falta_presion")
+        resumen_lineas.append(f"*Casillero 12:* Reclamos falta presión: {val if val is not None else '(no cargado)'}")
+        
+        val = datos.get("reclamos_escape_calzada_vereda")
+        resumen_lineas.append(f"*Casillero 13:* Reclamos escapes/fugas: {val if val is not None else '(no cargado)'}")
+    
+    if tipo_servicio in [TIPO_SERVICIO_CLOACAS_SOLO, TIPO_SERVICIO_AMBOS]:
+        val = datos.get("reclamos_obstruccion_cloacal")
+        idx = "14" if tipo_servicio == TIPO_SERVICIO_AMBOS else "14"
+        resumen_lineas.append(f"*Casillero {idx}:* Reclamos obstrucción cloacal: {val if val is not None else '(no cargado)'}")
+    
+    # Cortes (para todos)
+    val = datos.get("cortes_servicio_falta_pago")
+    resumen_lineas.append(f"*Casillero 15:* Cortes por falta de pago: {val if val is not None else '(no cargado)'}")
+    
+    resumen_lineas.append("\n¿Los datos son correctos?")
+    resumen_lineas.append("👉 Respondé *ENVIAR* para finalizar")
+    resumen_lineas.append("👉 O respondé el número del casillero que querés corregir (Ej: 4)")
+    
+    prompt = "\n".join(resumen_lineas)
+    return 25, prompt
 
 # ============================================================================
 # PROCESAMIENTO DE RESPUESTAS
@@ -845,14 +1016,56 @@ def procesar_respuesta(datos, respuesta_usuario):
                 return False, "❌ Por favor, escribí un número válido (o 'siguiente' para saltear)."
             datos["cortes_servicio_falta_pago"] = valor
         datos["paso_actual"] = 25
-        datos["estado_registro"] = "Completo"
+        datos["en_modo_edicion"] = False
         guardar_datos(datos)
         return True, "✅ ¡Perfecto!"
     
-    # PASO 25: Mensaje Final
+    # PASO 25: Resumen y Edición / ENVIAR Final
     elif paso == 25:
-        _, mensaje_final = generar_mensaje_final(datos)
-        return True, mensaje_final
+        respuesta_limpia = respuesta_usuario.strip().upper()
+        
+        # Si responde ENVIAR: finalizar
+        if respuesta_limpia == "ENVIAR":
+            datos["estado_registro"] = "Completo"
+            guardar_datos(datos)
+            _, mensaje_final = generar_mensaje_final(datos)
+            return True, mensaje_final
+        
+        # Si responde un número de casillero: entrar en modo edición
+        if respuesta_limpia in CASILLEROS_EDICION:
+            clave_campo, descripcion = CASILLEROS_EDICION[respuesta_limpia]
+            
+            # Mapeo inverso: qué paso corresponde a cada casillero
+            mapeo_paso = {
+                "conexiones_agua": 4,
+                "habitantes_agua": 5,
+                "caudal_agua_m3dia": 6,
+                "macromedidores_operativos_agua": 11,
+                "longitud_red_agua_km": 12,
+                "capacidad_almacenamiento_m3": 13,
+                "poblacion_urbana_cloacas": 14,
+                "conexiones_cloacas": 15,
+                "conexiones_cloacas_com_ind": 16,
+                "habitantes_cloacas": 17,
+                "longitud_red_cloacas_km": 18,
+                "caudal_cloacas_media": 19,
+                "reclamos_falta_presion": 21,
+                "reclamos_escape_calzada_vereda": 22,
+                "reclamos_obstruccion_cloacal": 23,
+                "cortes_servicio_falta_pago": 24,
+            }
+            
+            paso_original = mapeo_paso.get(clave_campo)
+            if paso_original:
+                datos["en_modo_edicion"] = True
+                datos["paso_edicion_previo"] = paso_original
+                datos["paso_actual"] = paso_original
+                guardar_datos(datos)
+                return True, f"✅ Editando: {descripcion}"
+            else:
+                return False, "❌ Casillero no encontrado. Por favor, respondé un número válido (1-16) o 'ENVIAR'."
+        
+        return False, "❌ Respondé 'ENVIAR' para finalizar o el número del casillero a corregir (1-16)."
     
     return False, "Error: paso desconocido."
 
@@ -946,6 +1159,13 @@ def procesar_mensaje(telefono, mensaje_usuario, sesion_actual=None):
             "mensaje_proximo_prompt": prompt,
             "datos_sesion": sesion_actual,
         }
+    
+    # Si estamos saliendo de edición, volver a paso 25 (resumen)
+    if sesion_actual.get("en_modo_edicion") and sesion_actual["paso_actual"] != 25:
+        # Después de la corrección, volver al resumen
+        sesion_actual["paso_actual"] = 25
+        sesion_actual["en_modo_edicion"] = False
+        guardar_datos(sesion_actual)
     
     _, proximo_prompt = obtener_proximo_paso(sesion_actual)
     
