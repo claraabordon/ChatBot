@@ -1,7 +1,8 @@
 # motor.py — Máquina de Estados para Bot Conversacional de WhatsApp
 # Relevamiento Anual de Prestadores (ANEXO I)
-# Versión: 4.0 - Refactorización Estructural Profunda
+# Versión: 4.1 - Refactorización Estructural Profunda
 # - Validación por Padrón Oficial (PEDIR_ID)
+# - Menú Inicial de Opciones (Paso 0.1) + Consulta Técnica (Paso 0.2)
 # - Doble Afectación Personal (afectacion_agua + afectacion_cloacas)
 # - Edición Final por Casilleros (Paso 25 Interactivo)
 
@@ -66,7 +67,7 @@ def validar_id_prestador(id_texto):
         # Intentar convertir a entero (ID numérico)
         id_numerico = str(int(id_texto.strip()))
         padron = cargar_padron_oficial()
-        
+
         if id_numerico in padron:
             return True, padron[id_numerico]
         else:
@@ -113,6 +114,7 @@ def crear_sesion_nueva(telefono):
         "en_modo_edicion": False,          # Flag para detectar si venimos de edición en paso 25
         "paso_edicion_previo": None,       # Guarda el paso original antes de entrar en edición
         "bloqueado_por_completitud": False,  # Candado electrónico si ya completó
+        "consulta_soporte": None,          # Almacena la consulta técnica del usuario
 
         # Datos básicos
         "localidad": None,
@@ -207,6 +209,26 @@ def obtener_proximo_paso(datos):
             "¡Hola! 👋 Te damos la bienvenida al asistente virtual para el Relevamiento Anual de Prestadores. "
             "Para empezar, por favor escribí tu *ID numérico de prestador* según el padrón oficial.\n\n"
             "💡 Este ID es fundamental para validar tu institución en nuestro registro."
+        )
+        return paso, prompt
+
+    # PASO 0.1: Menú de Opciones Inicial (NUEVO)
+    elif paso == 0.1:
+        nombre = datos.get("nombre_prestador", "Institución")
+        prompt = (
+            f"¡Validación exitosa! 🎉 Bienvenida institución: *{nombre}*.\n\n"
+            "¿Qué deseas hacer hoy?\n"
+            "1 - Iniciar o continuar la carga del Relevamiento Anual (ANEXO I)\n"
+            "2 - Ponerme en contacto con el equipo técnico (Consultas/Soporte)\n\n"
+            "Respondé solo con el número de opción (1 o 2)."
+        )
+        return paso, prompt
+
+    # PASO 0.2: Dejar Consulta Técnica (NUEVO)
+    elif paso == 0.2:
+        prompt = (
+            "Por favor, escribí tu consulta técnica detallada a continuación. "
+            "Un asesor se comunicará con vos a la brevedad: 🛠️"
         )
         return paso, prompt
 
@@ -483,7 +505,7 @@ def obtener_proximo_paso(datos):
         )
         return paso, prompt
 
-    # PASO 25: Resumen y Edición Final (NUEVO - Interactivo por Casilleros)
+    # PASO 25: Resumen y Edición Final (Interactivo por Casilleros)
     elif paso == 25:
         return generar_resumen_edicion(datos)
 
@@ -778,12 +800,48 @@ def procesar_respuesta(datos, respuesta_usuario):
                 "2 - Salir"
             )
 
-        # No está bloqueado: registrar ID y continuar
+        # No está bloqueado: registrar ID y pasar al Menú Inicial (Paso 0.1)
         datos["id_prestador"] = respuesta_usuario.strip()
         datos["nombre_prestador"] = nombre_oficial
-        datos["paso_actual"] = 1
+        datos["paso_actual"] = 0.1
         guardar_datos(datos)
-        return True, f"✅ ¡Perfecto! Registramos a *{nombre_oficial}*. Continuemos..."
+        return True, ""
+
+    # PASO 0.1: Menú de Opciones Inicial (NUEVO)
+    elif paso == 0.1:
+        if not es_opcion_valida(respuesta_usuario, ["1", "2"]):
+            return False, "❌ Por favor, respondé con 1 o 2."
+
+        opcion = respuesta_usuario.strip()
+
+        if opcion == "1":
+            # Iniciar el cuestionario completo
+            datos["paso_actual"] = 1
+            guardar_datos(datos)
+            return True, "🚀 ¡Excelente! Iniciamos el cuestionario."
+
+        elif opcion == "2":
+            # Ir a dejar consulta técnica
+            datos["paso_actual"] = 0.2
+            guardar_datos(datos)
+            return True, ""
+
+    # PASO 0.2: Dejar Consulta Técnica (NUEVO)
+    elif paso == 0.2:
+        consulta = respuesta_usuario.strip()
+        if not consulta:
+            return False, "❌ Por favor, escribí tu consulta técnica."
+
+        # Guardar consulta y cambiar estado
+        datos["consulta_soporte"] = consulta
+        datos["estado_registro"] = "Consulta_Soporte"
+        datos["paso_actual"] = 0.1
+        guardar_datos(datos)
+        return True, (
+            "✅ ¡Gracias! Tu consulta ha sido registrada. "
+            "Un asesor se comunicará con vos a la brevedad. 📞\n\n"
+            "¿Deseas hacer algo más?"
+        )
 
     # PASO 1: Localidad
     elif paso == 1:
@@ -1132,7 +1190,7 @@ def procesar_respuesta(datos, respuesta_usuario):
         guardar_datos(datos)
         return True, "✅ ¡Perfecto! Vamos al resumen final..."
 
-    # PASO 25: Resumen y Edición Final (NUEVO - Interactivo)
+    # PASO 25: Resumen y Edición Final (Interactivo)
     elif paso == 25:
         respuesta_limpia = respuesta_usuario.strip().upper()
 
