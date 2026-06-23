@@ -1,6 +1,6 @@
 # motor.py — Máquina de Estados para Bot Conversacional de WhatsApp
 # Relevamiento Anual de Prestadores (ANEXO I)
-# Versión: 3.0 - Completamente refactorizado conforme a especificaciones
+# Versión: 3.1 - Corregida la sincronización del módulo de Personal
 
 import json
 from persistencia import guardar_datos
@@ -27,7 +27,7 @@ def crear_sesion_nueva(telefono):
         "telefono": telefono,
         "estado_registro": "Incompleto",
         "paso_actual": 0,
-        "paso_personal_actual": None,  # Para iterar sobre PERFILES_PERSONAL
+        "paso_personal_actual": None,  # Para iterar sobre PERFILES_PERSONAL (dependencia, contratados, afectacion)
         "perfil_personal_index": 0,    # Índice del perfil actual (0-4)
         
         # Datos básicos
@@ -176,15 +176,12 @@ def obtener_proximo_paso(datos):
         )
         return paso, prompt
     
-    # PASO 3.3: Inicio del Módulo de Personal
+    # PASO 3.3: Iniciar Personal (Paso unificado)
     elif paso == 3.3:
-        datos["paso_personal_actual"] = "dependencia"
-        datos["perfil_personal_index"] = 0
-        datos["paso_actual"] = 3.31
-        return obtener_proximo_paso(datos)
-    
-    # PASO 3.31 - 3.35: Módulo de Personal (Dinámico)
-    elif 3.31 <= paso <= 3.35:
+        if datos["paso_personal_actual"] is None:
+            # Primera vez: inicializar el módulo de personal
+            datos["paso_personal_actual"] = "dependencia"
+            datos["perfil_personal_index"] = 0
         return obtener_paso_personal(datos)
     
     # PASO 4: Conexiones de Agua (Solo Agua/Ambos)
@@ -414,7 +411,8 @@ def obtener_proximo_paso(datos):
 def obtener_paso_personal(datos):
     """
     Maneja el módulo dinámico de Personal.
-    Itera sobre los 5 perfiles y dentro de cada uno las 3 preguntas (dependencia, contratados, afectación).
+    MANTIENE paso_actual = 3.3 FIJO durante toda la iteración.
+    Solo transiciona cuando se terminan los 5 perfiles.
     Retorna: (paso_numero, mensaje_prompt)
     """
     tipo_servicio = datos["tipo_servicio"]
@@ -422,7 +420,8 @@ def obtener_paso_personal(datos):
     paso_personal = datos["paso_personal_actual"]
     perfil_actual = PERFILES_PERSONAL[perfil_index]
     
-    paso_actual_total = datos["paso_actual"]
+    # SIEMPRE retornamos paso 3.3 mientras estemos en personal
+    paso_actual_total = 3.3
     
     if paso_personal == "dependencia":
         prompt = f"*{perfil_actual}*: ¿Cuántos en relación de dependencia (Sueldos/Salarios)?"
@@ -441,13 +440,16 @@ def obtener_paso_personal(datos):
         if total_personal == 0 or tipo_servicio != TIPO_SERVICIO_AMBOS:
             datos["personal"][perfil_actual]["afectacion"] = 100 if total_personal > 0 else 0
             
+            # Avanzar al siguiente perfil o terminar personal
             datos["perfil_personal_index"] += 1
             if datos["perfil_personal_index"] < len(PERFILES_PERSONAL):
                 datos["paso_personal_actual"] = "dependencia"
-                datos["paso_actual"] += 1
+                # NO modificamos paso_actual, permanece en 3.3
                 return obtener_paso_personal(datos)
             else:
+                # Personal completado, transicionar al paso 4
                 datos["paso_actual"] = 4
+                datos["paso_personal_actual"] = None  # Limpiar para evitar confusiones
                 return obtener_proximo_paso(datos)
         
         # Si hay personal y tipo_servicio es AMBOS, preguntar el %
@@ -459,6 +461,7 @@ def obtener_paso_personal(datos):
 def procesar_respuesta_personal(datos, respuesta):
     """
     Procesa la respuesta del usuario en el módulo de Personal.
+    Mantiene paso_actual = 3.3 durante toda la iteración.
     Retorna: (éxito: bool, mensaje_error: str o None)
     """
     tipo_servicio = datos["tipo_servicio"]
@@ -476,6 +479,7 @@ def procesar_respuesta_personal(datos, respuesta):
     if paso_personal == "dependencia":
         datos["personal"][perfil_actual]["dependencia"] = valor
         datos["paso_personal_actual"] = "contratados"
+        # paso_actual permanece en 3.3
     
     elif paso_personal == "contratados":
         datos["personal"][perfil_actual]["contratados"] = valor
@@ -483,15 +487,18 @@ def procesar_respuesta_personal(datos, respuesta):
         
         total_personal = (datos["personal"][perfil_actual]["dependencia"] or 0) + (valor if valor is not None else 0)
         
+        # Si no hay personal o servicio no es ambos, asignar automáticamente y avanzar de perfil
         if total_personal == 0 or tipo_servicio != TIPO_SERVICIO_AMBOS:
             datos["personal"][perfil_actual]["afectacion"] = 100 if total_personal > 0 else 0
             datos["perfil_personal_index"] += 1
             
             if datos["perfil_personal_index"] < len(PERFILES_PERSONAL):
                 datos["paso_personal_actual"] = "dependencia"
-                datos["paso_actual"] += 1
+                # paso_actual permanece en 3.3
             else:
+                # Personal completado, transicionar al paso 4
                 datos["paso_actual"] = 4
+                datos["paso_personal_actual"] = None
     
     elif paso_personal == "afectacion":
         if valor is not None:
@@ -503,9 +510,11 @@ def procesar_respuesta_personal(datos, respuesta):
         
         if datos["perfil_personal_index"] < len(PERFILES_PERSONAL):
             datos["paso_personal_actual"] = "dependencia"
-            datos["paso_actual"] += 1
+            # paso_actual permanece en 3.3
         else:
+            # Personal completado, transicionar al paso 4
             datos["paso_actual"] = 4
+            datos["paso_personal_actual"] = None
     
     guardar_datos(datos)
     return True, None
@@ -578,13 +587,8 @@ def procesar_respuesta(datos, respuesta_usuario):
         guardar_datos(datos)
         return True, "✅ Registrado."
     
-    # PASO 3.3: Iniciar Personal
+    # PASO 3.3: Módulo de Personal (paso UNIFICADO)
     elif paso == 3.3:
-        datos["paso_actual"] = 3.31
-        return True, ""
-    
-    # PASO 3.31 - 3.35: Módulo Personal
-    elif 3.31 <= paso <= 3.35:
         exito, mensaje = procesar_respuesta_personal(datos, respuesta_usuario)
         if not exito:
             return False, mensaje
